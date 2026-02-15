@@ -1,0 +1,44 @@
+{{ define "versions.html" }}
+{{ template "header.html" }}
+<h1 class="text-2xl font-bold mb-6">
+    Versions for {{ .game.ShortName }}
+</h1>
+
+<div class="bg-white shadow rounded">
+    <table class="w-full">
+        <thead class="bg-gray-200 text-left">
+            <tr>
+                <th class="p-3">Full Name</th>
+                <th class="p-3">Version ID</th>
+                <th class="p-3">Status</th>
+                <th class="p-3"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {{ range .game.Versions }}
+            <tr class="border-t">
+                <td class="p-3">{{ .FullName }}</td>
+                <td class="p-3 text-sm text-gray-600">{{ .VersionHash }}</td>
+                <td class="p-3">
+                    {{ if .Published }}
+                        <span class="text-green-600 font-semibold">Published</span>
+                    {{ else }}
+                        <span class="text-red-600 font-semibold">Unpublished</span>
+                    {{ end }}
+                </td>
+                <td class="p-3">
+                    {{ if .Published }}
+                    <form method="POST" action="/admin/versions/{{ .ID }}/unpublish">
+                        <button class="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700">
+                            Unpublish
+                        </button>
+                    </form>
+                    {{ end }}
+                </td>
+            </tr>
+            {{ end }}
+        </tbody>
+    </table>
+</div>
+{{ template "footer.html" }}
+{{ end }}

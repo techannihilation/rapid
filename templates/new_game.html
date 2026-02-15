@@ -1,0 +1,32 @@
+{{ define "new_game.html" }}
+{{ template "header.html" }}
+<h1 class="text-2xl font-bold mb-6">Add Game</h1>
+
+<form method="POST" action="/admin/games"
+      class="bg-white shadow rounded p-6 max-w-lg">
+
+    <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">Short Name</label>
+        <input name="short_name"
+               class="w-full border rounded px-3 py-2"/>
+    </div>
+
+    <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">Repo URL</label>
+        <input name="repo_url"
+               class="w-full border rounded px-3 py-2"/>
+    </div>
+
+    <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">Git URL</label>
+        <input name="git_url"
+               class="w-full border rounded px-3 py-2"/>
+    </div>
+
+    <button class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+        Create
+    </button>
+
+</form>
+{{ template "footer.html" }}
+{{ end }}

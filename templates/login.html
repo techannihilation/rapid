@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+<div class="bg-white p-8 rounded shadow w-96">
+    <h2 class="text-2xl font-bold mb-6 text-center">Admin Login</h2>
+
+    {{ if .error }}
+    <div class="bg-red-100 text-red-700 p-2 rounded mb-4">
+        {{ .error }}
+    </div>
+    {{ end }}
+
+    <form method="POST" action="/admin/login">
+        <div class="mb-4">
+            <label class="block text-sm mb-1">Email</label>
+            <input name="email" type="email"
+                   class="w-full border px-3 py-2 rounded"/>
+        </div>
+
+        <div class="mb-4">
+            <label class="block text-sm mb-1">Password</label>
+            <input name="password" type="password"
+                   class="w-full border px-3 py-2 rounded"/>
+        </div>
+
+        <div class="mb-4">
+            <label class="block text-sm mb-1">2FA Code (if enabled)</label>
+            <input name="code"
+                   class="w-full border px-3 py-2 rounded"/>
+        </div>
+
+        <button class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">
+            Login
+        </button>
+    </form>
+</div>
+
+</body>
+</html>

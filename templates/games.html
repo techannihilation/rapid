@@ -1,0 +1,39 @@
+{{ define "games.html" }}
+{{ template "header.html" }}
+<div class="flex justify-between mb-6">
+    <h1 class="text-2xl font-bold">Games</h1>
+    <a href="/admin/games/new"
+       class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+       Add Game
+    </a>
+</div>
+
+<div class="bg-white shadow rounded">
+    <table class="w-full">
+        <thead class="bg-gray-200 text-left">
+            <tr>
+                <th class="p-3">Short Name</th>
+                <th class="p-3">RAPID Repo</th>
+                <th class="p-3">GIT Repo</th>
+                <th class="p-3">Versions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{ range .games }}
+            <tr class="border-t">
+                <td class="p-3 font-medium">{{ .ShortName }}</td>
+                <td class="p-3">{{ .RepoURL }}</td>
+                <td class="p-3">{{ .GitURL }}</td>
+                <td class="p-3">
+                    <a href="/admin/games/{{ .ID }}/versions"
+                       class="text-blue-600 hover:underline">
+                        View Versions
+                    </a>
+                </td>
+            </tr>
+            {{ end }}
+        </tbody>
+    </table>
+</div>
+{{ template "footer.html" }}
+{{ end }}

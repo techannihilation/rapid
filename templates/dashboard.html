@@ -1,0 +1,33 @@
+{{ define "dashboard.html" }}
+{{ template "header.html" }}
+<h1 class="text-3xl font-bold mb-8">Dashboard</h1>
+
+<div class="grid grid-cols-3 gap-6">
+
+    <div class="bg-white p-6 rounded shadow">
+        <div class="text-gray-500">Total Games</div>
+        <div class="text-3xl font-bold">{{ .gameCount }}</div>
+    </div>
+
+    <div class="bg-white p-6 rounded shadow">
+        <div class="text-gray-500">Total Versions</div>
+        <div class="text-3xl font-bold">{{ .versionCount }}</div>
+    </div>
+
+    <div class="bg-white p-6 rounded shadow">
+        <div class="text-gray-500">Published Versions</div>
+        <div class="text-3xl font-bold text-green-600">
+            {{ .publishedCount }}
+        </div>
+    </div>
+
+</div>
+
+<div class="mt-10">
+    <a href="/admin/games"
+       class="bg-blue-600 text-white px-6 py-3 rounded hover:bg-blue-700">
+       Manage Games
+    </a>
+</div>
+{{ template "footer.html" }}
+{{ end }}

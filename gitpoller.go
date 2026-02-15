@@ -1,0 +1,300 @@
+package main
+
+import (
+	"compress/gzip"
+	"crypto/md5"
+	"encoding/hex"
+	"fmt"
+	"hash/crc32"
+	"io"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+)
+
+func StartGitPoller(cfg Config) {
+	go func() {
+		for {
+			checkRepos(cfg)
+			time.Sleep(5 * time.Minute)
+		}
+	}()
+}
+
+func checkRepos(cfg Config) {
+	var games []Game
+	DB.Find(&games)
+
+	for _, game := range games {
+		processGame(cfg, game)
+	}
+}
+
+func processGame(cfg Config, game Game) {
+	repoPath := filepath.Join(cfg.ReposPath, game.ShortName)
+
+	// Clone repo if it doesn't exist
+	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+		if err := exec.Command("git", "clone", game.GitURL, repoPath).Run(); err != nil {
+			fmt.Println("Failed to clone repo:", err)
+			return
+		}
+	}
+
+	// Fetch latest changes and tags
+	if err := exec.Command("git", "-C", repoPath, "fetch", "--tags").Run(); err != nil {
+		fmt.Println("Failed to fetch repo:", err)
+		return
+	}
+
+	// Get the last 30 commit hashes
+	cmd := exec.Command("git", "-C", repoPath, "rev-list", fmt.Sprintf("--max-count=%d", cfg.BackLog), "origin/HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		fmt.Println("Failed to get commit list:", err)
+		return
+	}
+
+	commits := strings.Split(strings.TrimSpace(string(out)), "\n")
+
+	for _, hash := range commits {
+		versionIdentifier := hash
+
+		// Check if there is a tag for this commit
+		tagCmd := exec.Command("git", "-C", repoPath, "tag", "--points-at", hash)
+		tagOut, err := tagCmd.Output()
+		if err != nil {
+			fmt.Println("Failed to get tag for commit", hash, ":", err)
+			continue
+		}
+		tag := strings.TrimSpace(string(tagOut))
+		if tag != "" {
+			versionIdentifier = tag
+		}
+
+		// Check if this version already exists in the DB
+		var existing GameVersion
+		if err := DB.Where("version_hash = ?", "git:"+versionIdentifier).First(&existing).Error; err == nil {
+			continue // version already exists
+		}
+
+		// Checkout the commit/tag
+		checkoutCmd := exec.Command("git", "-C", repoPath, "reset", "--hard", hash)
+		if tag != "" {
+			checkoutCmd = exec.Command("git", "-C", repoPath, "reset", "--hard", tag)
+		}
+		if err := checkoutCmd.Run(); err != nil {
+			fmt.Println("Failed to checkout", versionIdentifier, ":", err)
+			continue
+		}
+
+		modinfo, err := os.Open(filepath.Join(repoPath, "modinfo.lua"))
+
+		if err == nil {
+			modinfocontent, _ := io.ReadAll(modinfo)
+			modinfo.Close()
+
+			newmodinfo := strings.ReplaceAll(string(modinfocontent), "$VERSION", versionIdentifier)
+
+			out, _ := os.Create(filepath.Join(repoPath, "modinfo.lua"))
+			out.Write([]byte(newmodinfo))
+			out.Close()
+
+			log.Printf("Overridden version in modinfo\n")
+		}
+
+		// Create the version
+		createVersion(repoPath, game, versionIdentifier, cfg)
+
+	}
+}
+func computeAndCreatePoolPath(cfg Config, md5sum string) string {
+
+	filep := filepath.Join(cfg.PoolPath, md5sum[0:2])
+
+	if _, err := os.Stat(filep); os.IsNotExist(err) {
+		log.Printf("Creating pool path %s\n", filep)
+	}
+
+	err := os.MkdirAll(filep, 0750)
+	if err != nil {
+		panic(err)
+	}
+
+	return filepath.Join(filep, md5sum[2:]+".gz")
+
+}
+
+func CopyFile(src, dst string) (int64, error) {
+	sourceFileStat, err := os.Stat(src)
+	if err != nil {
+		return 0, err
+	}
+
+	if !sourceFileStat.Mode().IsRegular() {
+		return 0, fmt.Errorf("%s is not a regular file", src)
+	}
+
+	source, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer source.Close()
+
+	destination, err := os.Create(dst)
+	if err != nil {
+		return 0, err
+	}
+	defer destination.Close()
+	nBytes, err := io.Copy(destination, source)
+	return nBytes, err
+}
+
+func createVersion(repoPath string, game Game, hash string, cfg Config) {
+	err := DB.Transaction(func(tx *gorm.DB) error {
+
+		versionMD5 := md5sumString(hash) //TODO
+
+		version := GameVersion{
+			GameID:      game.ID,
+			VersionHash: "git:" + hash,
+			VersionMD5:  versionMD5,
+			FullName:    game.ShortName + "-" + hash[:7],
+		}
+		if err := tx.Create(&version).Error; err != nil {
+			return err
+		}
+
+		err := filepath.Walk(repoPath, func(fullpath string, info os.FileInfo, err error) error {
+			if info == nil || info.IsDir() {
+				return nil
+			}
+
+			path, _ := filepath.Rel(repoPath, fullpath)
+
+			path = strings.ToLower(path)
+
+			skip := false
+
+			if strings.HasPrefix(path, ".git") {
+				skip = true
+			}
+
+			if !skip {
+
+				sums, err := FileSums(fullpath)
+				if err != nil {
+					return err
+				}
+
+				var file File
+				if err := tx.Where("md5_sum = ?", sums.MD5hex).First(&file).Error; err != nil {
+
+					file = File{
+
+						MD5Sum: sums.MD5hex,
+						CRC32:  sums.CRC32,
+						Len:    uint64(info.Size()),
+					}
+					res := tx.Create(&file)
+					if res.Error != nil {
+						return res.Error
+					}
+
+					pp := computeAndCreatePoolPath(cfg, sums.MD5hex)
+					if _, err := os.Stat(pp); os.IsNotExist(err) {
+						//_, err = CopyFile(fullpath, pp)
+						dest, err := os.Create(pp)
+						if err != nil {
+							log.Println(err.Error())
+							return err
+						}
+						gzw := gzip.NewWriter(dest)
+						src, err := os.Open(fullpath)
+						if err != nil {
+							dest.Close()
+							os.Remove(pp)
+							log.Println(err.Error())
+							return err
+						}
+
+						defer dest.Close()
+						defer src.Close()
+
+						_, err = io.Copy(gzw, src)
+
+						gzw.Flush()
+						gzw.Close()
+
+						if err != nil {
+							log.Println(err.Error())
+							return err
+						}
+					}
+				}
+
+				vf := VersionFile{
+					GameVersionID: version.ID,
+					FileID:        file.ID,
+					Path:          path,
+				}
+				tx.Create(&vf)
+
+			}
+
+			return nil
+		})
+
+		newMD5 := GetSDPMD5(tx, versionMD5)
+		log.Printf("MD5 %s -> %s\n", versionMD5, newMD5)
+
+		version.VersionMD5 = newMD5
+		tx.Save(&version)
+
+		return err
+	})
+
+	if err != nil {
+		log.Println("Failed creating version:", err)
+		return
+	}
+
+}
+
+type FileChecksums struct {
+	MD5hex string
+	MD5    [16]byte
+	CRC32  uint32
+}
+
+func FileSums(path string) (*FileChecksums, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	h := md5.New()
+	io.Copy(h, f)
+
+	ret := FileChecksums{}
+	ret.MD5 = [16]byte(h.Sum(nil))
+	ret.MD5hex = hex.EncodeToString(ret.MD5[:])
+	C := crc32.New(crc32.IEEETable)
+	f.Seek(0, io.SeekStart)
+	io.Copy(C, f)
+	ret.CRC32 = C.Sum32()
+
+	return &ret, nil
+}
+
+func md5sumString(s string) string {
+	h := md5.New()
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))
+}
