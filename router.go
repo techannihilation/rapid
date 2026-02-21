@@ -34,7 +34,7 @@ func SetupRouter() *gin.Engine {
 			protected.POST("/games", CreateGame)
 
 			protected.GET("/games/:id/versions", ListVersions)
-			protected.POST("/versions/:id/unpublish", UnpublishVersion)
+			protected.POST("/versions/:id/togglepublish", TogglePublishVersion)
 		}
 	}
 

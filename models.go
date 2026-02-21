@@ -22,6 +22,7 @@ type GameVersion struct {
 	VersionHash string `gorm:"uniqueIndex"`
 	VersionMD5  string
 	FullName    string
+	Progressive int64
 	Published   bool `gorm:"default:true;index"`
 	CreatedAt   time.Time
 }

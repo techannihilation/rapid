@@ -31,6 +31,8 @@ func ReposHandler(c *gin.Context) {
 		line := fmt.Sprintf("%s,%s,,\n", g.ShortName, g.RepoURL)
 		gz.Write([]byte(line))
 	}
+	gz.Flush()
+	gz.Close()
 }
 
 func VersionsHandler(c *gin.Context) {
@@ -43,12 +45,15 @@ func VersionsHandler(c *gin.Context) {
 	}
 
 	var versions []GameVersion
-	DB.Where("game_id = ?", game.ID).Find(&versions)
+	DB.Where("game_id = ?", game.ID).Order("id DESC").Limit(100).Find(&versions)
 
 	c.Header("Content-Type", "application/gzip")
 
 	gz := gzip.NewWriter(c.Writer)
 	defer gz.Close()
+
+	var lastver *GameVersion = nil
+	
 
 	for _, v := range versions {
 		line := fmt.Sprintf("%s:%s,%s,,%s\n",
@@ -58,7 +63,28 @@ func VersionsHandler(c *gin.Context) {
 			v.FullName,
 		)
 		gz.Write([]byte(line))
+		lastver = &v
 	}
+
+	//We tag as test all git versions, so last one is latest 
+	line := fmt.Sprintf("%s:test,%s,,%s\n",
+		shortname,
+		lastver.VersionMD5,
+		lastver.FullName,
+	)
+	gz.Write([]byte(line))
+
+	//We tag published as stable
+	var g GameVersion
+	if DB.Where("game_id = ? AND published = true", game.ID).Order("id DESC").First(&g).Error == nil {
+		line := fmt.Sprintf("%s:stable,%s,,%s\n",
+		shortname,
+		g.VersionMD5,
+		g.FullName)
+		gz.Write([]byte(line))
+	}
+	gz.Flush()
+	gz.Close()
 }
 
 func GetSDPRecords(tx *gorm.DB, md5 string) ([]SdpRecord, error) {
@@ -220,19 +246,21 @@ func ListVersions(c *gin.Context) {
 	id := c.Param("id")
 
 	var game Game
-	DB.Preload("Versions").First(&game, id)
+	var versions []GameVersion
+	DB.Where("game_id = ?", id).Order("ID desc").Find(&versions)
 
 	c.HTML(http.StatusOK, "versions.html", gin.H{
 		"game": game,
+		"versions": versions,
 	})
 }
 
-func UnpublishVersion(c *gin.Context) {
+func TogglePublishVersion(c *gin.Context) {
 	id := c.Param("id")
 
 	DB.Model(&GameVersion{}).
-		Where("id = ?", id).
-		Update("published", false)
+    Where("id = ?", id).
+    Update("published", gorm.Expr("NOT published"))
 
 	c.Redirect(http.StatusFound, c.Request.Referer())
 }

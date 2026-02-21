@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -34,6 +36,55 @@ func checkRepos(cfg Config) {
 		processGame(cfg, game)
 	}
 }
+
+var (
+	// Strictly match: return { ... }
+	blockRegex = regexp.MustCompile(`(?s)^\s*return\s*\{\s*(.*?)\s*\}\s*$`)
+
+	// Strictly match one key/value line
+	fieldRegex = regexp.MustCompile(`^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(?:'([^']*)'|([0-9]+))\s*,?\s*$`)
+)
+
+func parseLuaTable(input string) (map[string]string, error) {
+	result := make(map[string]string)
+
+	// 1️⃣ Validate and extract block
+	blockMatch := blockRegex.FindStringSubmatch(input)
+	if blockMatch == nil {
+		return nil, errors.New("input must be a single 'return { ... }' block")
+	}
+
+	body := blockMatch[1]
+
+	// 2️⃣ Split into lines and validate each
+	lines := strings.Split(body, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		match := fieldRegex.FindStringSubmatch(line)
+		if match == nil {
+			return nil, fmt.Errorf("invalid line: %s", line)
+		}
+
+		key := match[1]
+
+		var value string
+		if match[2] != "" {
+			value = match[2] // string
+		} else {
+			value = match[3] // number
+		}
+
+		result[key] = value
+	}
+
+	return result, nil
+}
+
 
 func processGame(cfg Config, game Game) {
 	repoPath := filepath.Join(cfg.ReposPath, game.ShortName)
@@ -94,12 +145,26 @@ func processGame(cfg Config, game Game) {
 		}
 
 		modinfo, err := os.Open(filepath.Join(repoPath, "modinfo.lua"))
-
+		fullname := game.ShortName + "-" + hash[:min(8, len(hash))]
 		if err == nil {
 			modinfocontent, _ := io.ReadAll(modinfo)
 			modinfo.Close()
 
-			newmodinfo := strings.ReplaceAll(string(modinfocontent), "$VERSION", versionIdentifier)
+			newmodinfo := strings.ReplaceAll(string(modinfocontent), "$VERSION", hash[:min(8, len(hash))])
+
+
+			values , err := parseLuaTable(newmodinfo)
+
+			if err != nil {
+				fmt.Println(err.Error())
+				continue
+			}
+
+			name , ok := values["name"]
+			version, ok2 := values["version"]
+			if ok && ok2  {
+				fullname = name + " " + version
+			}
 
 			out, _ := os.Create(filepath.Join(repoPath, "modinfo.lua"))
 			out.Write([]byte(newmodinfo))
@@ -109,7 +174,7 @@ func processGame(cfg Config, game Game) {
 		}
 
 		// Create the version
-		createVersion(repoPath, game, versionIdentifier, cfg)
+		createVersion(repoPath, game, versionIdentifier, fullname ,cfg)
 
 	}
 }
@@ -155,7 +220,7 @@ func CopyFile(src, dst string) (int64, error) {
 	return nBytes, err
 }
 
-func createVersion(repoPath string, game Game, hash string, cfg Config) {
+func createVersion(repoPath string, game Game, hash string, fullname string, cfg Config) {
 	err := DB.Transaction(func(tx *gorm.DB) error {
 
 		versionMD5 := md5sumString(hash) //TODO
@@ -164,7 +229,8 @@ func createVersion(repoPath string, game Game, hash string, cfg Config) {
 			GameID:      game.ID,
 			VersionHash: "git:" + hash,
 			VersionMD5:  versionMD5,
-			FullName:    game.ShortName + "-" + hash[:7],
+			FullName:    fullname,//game.ShortName + "-" + hash[:min(7, len(hash))],
+			Published: false,
 		}
 		if err := tx.Create(&version).Error; err != nil {
 			return err
