@@ -1,5 +1,5 @@
 database_url: "host=/var/run/postgresql dbname=rapid"
 repos_path: "./repos"
 pool_path: "./pool"
-back_log: 1
+back_log: 5
 cookiesecret: "AJKDHAJD"

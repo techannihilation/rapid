@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,7 +86,6 @@ func parseLuaTable(input string) (map[string]string, error) {
 	return result, nil
 }
 
-
 func processGame(cfg Config, game Game) {
 	repoPath := filepath.Join(cfg.ReposPath, game.ShortName)
 
@@ -134,35 +134,60 @@ func processGame(cfg Config, game Game) {
 			continue // version already exists
 		}
 
+		var istag bool = false
+
 		// Checkout the commit/tag
 		checkoutCmd := exec.Command("git", "-C", repoPath, "reset", "--hard", hash)
 		if tag != "" {
 			checkoutCmd = exec.Command("git", "-C", repoPath, "reset", "--hard", tag)
+			istag = true
 		}
+
 		if err := checkoutCmd.Run(); err != nil {
 			fmt.Println("Failed to checkout", versionIdentifier, ":", err)
 			continue
 		}
+
+		progCmd := exec.Command("git", "-C", repoPath, "rev-list", "--count", "HEAD")
+		progOut, err := progCmd.Output()
+		if err != nil {
+			fmt.Println("Failed to get count for commit", hash, ":", err)
+			continue
+		}
+
+		scount := strings.TrimSpace(string(progOut))
+
+		prog, err := strconv.Atoi(scount)
+
+		if err != nil {
+			fmt.Println("Failed to parse commit count for commit", hash, ":", scount, err.Error())
+			continue
+		}
+
+		fmt.Printf("Prog is %d\n", prog)
 
 		modinfo, err := os.Open(filepath.Join(repoPath, "modinfo.lua"))
 		fullname := game.ShortName + "-" + hash[:min(8, len(hash))]
 		if err == nil {
 			modinfocontent, _ := io.ReadAll(modinfo)
 			modinfo.Close()
+			var newmodinfo string = ""
+			if !istag {
+				newmodinfo = strings.ReplaceAll(string(modinfocontent), "$VERSION", fmt.Sprintf("test-%d-%s", prog, hash[:min(7, len(hash))]))
+			} else {
+				newmodinfo = strings.ReplaceAll(string(modinfocontent), "$VERSION", tag)
+			}
 
-			newmodinfo := strings.ReplaceAll(string(modinfocontent), "$VERSION", hash[:min(8, len(hash))])
-
-
-			values , err := parseLuaTable(newmodinfo)
+			values, err := parseLuaTable(newmodinfo)
 
 			if err != nil {
 				fmt.Println(err.Error())
 				continue
 			}
 
-			name , ok := values["name"]
+			name, ok := values["name"]
 			version, ok2 := values["version"]
-			if ok && ok2  {
+			if ok && ok2 {
 				fullname = name + " " + version
 			}
 
@@ -174,7 +199,7 @@ func processGame(cfg Config, game Game) {
 		}
 
 		// Create the version
-		createVersion(repoPath, game, versionIdentifier, fullname ,cfg)
+		createVersion(repoPath, game, versionIdentifier, fullname, prog, cfg)
 
 	}
 }
@@ -220,7 +245,7 @@ func CopyFile(src, dst string) (int64, error) {
 	return nBytes, err
 }
 
-func createVersion(repoPath string, game Game, hash string, fullname string, cfg Config) {
+func createVersion(repoPath string, game Game, hash string, fullname string, prog int, cfg Config) {
 	err := DB.Transaction(func(tx *gorm.DB) error {
 
 		versionMD5 := md5sumString(hash) //TODO
@@ -229,8 +254,8 @@ func createVersion(repoPath string, game Game, hash string, fullname string, cfg
 			GameID:      game.ID,
 			VersionHash: "git:" + hash,
 			VersionMD5:  versionMD5,
-			FullName:    fullname,//game.ShortName + "-" + hash[:min(7, len(hash))],
-			Published: false,
+			FullName:    fullname, //game.ShortName + "-" + hash[:min(7, len(hash))],
+			Published:   false,
 		}
 		if err := tx.Create(&version).Error; err != nil {
 			return err
